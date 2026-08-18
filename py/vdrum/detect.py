@@ -101,7 +101,12 @@ class Track:
             return cls(t_ms=np.asarray(d["t_ms"], dtype=np.float64), channels=channels)
 
     def save(self, path: str | Path) -> None:
-        out: dict[str, object] = {"t_ms": self.t_ms, "hands": np.array(sorted(self.channels), dtype=object)}
+        # `hands` must be a UNICODE array, not dtype=object: load() uses
+        # allow_pickle=False (correctly -- these files are cache artifacts), and
+        # object arrays can only be read back with pickling enabled. Saving as
+        # object made every .npz written by extract() unreadable by load(),
+        # which silently broke the whole cached-track workflow (PLAN 9b).
+        out: dict[str, object] = {"t_ms": self.t_ms, "hands": np.array(sorted(self.channels), dtype=np.str_)}
         for h in sorted(self.channels):
             ch = self.channels[h]
             out[f"{h}_x"] = ch.x
@@ -151,8 +156,17 @@ class HandState:
 
     IDLE -> DESCENDING on vy_n > V_MIN; track the running peak; FIRE once
     velocity decays to DECEL_RATIO of the peak; REFRACTORY blocks a re-strike
-    until REFRAC_MS has elapsed AND the velocity has settled back below V_MIN;
-    a fade-out below V_MIN/2 before decel confirmation cancels.
+    until REFRAC_MS has elapsed AND the velocity has settled back below V_MIN.
+
+    V_MIN is the ONLY gate on what counts as a strike. There used to be a
+    "faded out below V_MIN/2 before decel was confirmed -> cancel" branch here,
+    but it was unreachable for any DECEL_RATIO >= 0.5: reaching it needs
+    peak*DECEL_RATIO <= vy_n < V_MIN*0.5, i.e. peak < V_MIN*0.5/DECEL_RATIO
+    (0.667 at the defaults), while entering DESCENDING requires peak > V_MIN
+    (0.8). Every descent that crosses V_MIN therefore fires. Rejecting weak
+    non-strikes needs a separate minimum-peak or minimum-duration gate, which
+    is a tuning decision for Phase 2 against real fixtures -- not silently
+    dead code that reads as if it were doing the job.
 
     The settle test is load-bearing: the One Euro filter keeps "descending"
     for hundreds of ms after the hand actually stops (its tail catching up),
@@ -231,9 +245,6 @@ class HandState:
                 self.state = "REFRACTORY"
                 self.fire_t = t_ms
                 return hit
-            elif vy_n < det.v_min * 0.5:
-                # Faded out before decel was confirmed: movement, not a strike.
-                self.state = "IDLE"
         elif self.state == "REFRACTORY":
             if t_ms - self.fire_t > det.refrac_ms and vy_n < det.v_min:
                 self.state = "IDLE"

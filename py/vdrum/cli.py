@@ -15,7 +15,7 @@ import os
 import sys
 from pathlib import Path
 
-from .config import Config, default_config, DEFAULT_CONFIG_PATH
+from .config import Config, default_config, find_config_dir
 
 MODEL_URL = (
     "https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
@@ -80,7 +80,7 @@ def cmd_detect(args) -> int:
     hits = detect(track, cfg, zones)
     result = {
         "source": str(p),
-        "config": str(getattr(args, "config", None) or DEFAULT_CONFIG_PATH),
+        "config": str(getattr(args, "config", None) or find_config_dir() / "default.json"),
         "hits": [h.to_dict() for h in hits],
     }
     text = json.dumps(result, indent=2)

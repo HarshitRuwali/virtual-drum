@@ -93,8 +93,9 @@ class ZoneSet:
         return {"zones": [z.to_dict() for z in self.zones]}
 
 
-DEFAULT_ZONES_PATH = Path(__file__).resolve().parents[2] / "config" / "zones.json"
-
-
 def default_zones() -> ZoneSet:
-    return ZoneSet.load(DEFAULT_ZONES_PATH)
+    # Same resolver as the tuning config, so both halves of config/ are found
+    # by identical rules whether running in-tree or installed.
+    from .config import find_config_dir
+
+    return ZoneSet.load(find_config_dir() / "zones.json")

@@ -20,8 +20,8 @@ dev = ["pytest>=8"]
 vdrum = "vdrum.cli:main"
 
 [tool.setuptools.packages.find]
-where = ["py"]
+where = ["."]           # this file lives IN py/, so packages are found here
 
 [tool.pytest.ini_options]
-testpaths = ["py/tests"]
+testpaths = ["tests"]   # relative to rootdir, which is py/
 addopts = "-q"

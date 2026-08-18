@@ -8,6 +8,7 @@ drifting apart after the first tuning pass.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -88,9 +89,31 @@ class Config:
         return replace(self, filter=replace(self.filter, **overrides))
 
 
-# py/vdrum/config.py -> parents[2] is the repo root
-DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "default.json"
+def find_config_dir() -> Path:
+    """Locate the shared `config/` directory (PLAN 4: one source of truth).
+
+    Checked in order: $VDRUM_CONFIG_DIR, then every ancestor of this file, then
+    the CWD. Plain `parents[2]` only resolves when running from a source
+    checkout -- an installed package sits in site-packages, where parents[2] is
+    unrelated, so `vdrum` (the console script this project declares) could never
+    find its own config.
+    """
+    env = os.environ.get("VDRUM_CONFIG_DIR")
+    if env:
+        d = Path(env).expanduser().resolve()
+        if (d / "default.json").is_file():
+            return d
+        raise FileNotFoundError(f"VDRUM_CONFIG_DIR={env} has no default.json")
+    here = Path(__file__).resolve()
+    for base in (*here.parents, Path.cwd()):
+        d = base / "config"
+        if (d / "default.json").is_file():
+            return d
+    raise FileNotFoundError(
+        "cannot locate config/default.json; set VDRUM_CONFIG_DIR to the "
+        "directory holding default.json and zones.json"
+    )
 
 
 def default_config() -> Config:
-    return Config.load(DEFAULT_CONFIG_PATH)
+    return Config.load(find_config_dir() / "default.json")

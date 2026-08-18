@@ -99,6 +99,35 @@ Canonical briefing. Read before acting. Full plan: `../PLAN.md`.
   the *first* post-reset velocity is penalized by the EMA one-step lag, so an
   "equal-velocity" profile peaks on frame 2, not frame 1 — tests must not assert an
   exact peak frame on equal-velocity inputs (float coin-flip at ~1e-6).
+- 2026-08-18T13:40Z [TOOL] **Code review of the completed codebase.** 12 findings;
+  all gates still pass (54 tests, typecheck clean), so none are caught by CI.
+  Highest severity, both VERIFIED by execution:
+  1. `extract.py:40-72` — a hand first detected after frame 0 never gets backfilled
+     for the earlier frames, so its channel arrays are SHORTER than `t_ms`.
+     `detect.py:281` then indexes out of range. Reproduced: `IndexError: index 3 is
+     out of bounds for axis 0 with size 3`. The entire real-video path crashes the
+     first time a hand enters the frame late — which is the normal case. Invisible
+     to CI because every fixture is synthetic and full-length.
+  2. PLAN 3.1 (frame clock) NOT implemented on the web side: `requestVideoFrameCallback`
+     0 uses, `getOutputTimestamp` 0 uses, `latencyHint`/`baseLatency`/`outputLatency`
+     0 uses. `main.ts:151` and `tracker.ts:77` use `performance.now()` in a rAF
+     callback — the exact anti-pattern PLAN 3.1 was written to forbid. Adds ~1 refresh
+     interval of jitter to the readout, and jitter is the non-calibratable metric.
+     `metronome.ts:25` samples the audio/perf clock bridge ONCE in the constructor
+     instead of via `getOutputTimestamp()`, so drift accumulates over a session.
+  3. `detect.py:234-236` and `detect.ts:140-142` are UNREACHABLE for any
+     `decel_ratio >= 0.5` (needs `peak < v_min*0.5/decel_ratio = 0.667` while
+     DESCENDING requires `peak > v_min = 0.8`). The documented "fade-out cancels"
+     rejection never happens. Faithfully ported to TS, so the parity gate passes with
+     both sides wrong — a structural blind spot: parity proves agreement, not correctness.
+  4. Timing feedback is snare-only: `expectedByZone` is written solely with "snare"
+     (`main.ts:108`); all other zones return early. Undocumented.
+- 2026-08-18T13:40Z [DISCOVERY] A predicted severe bug did NOT reproduce: rAF at 60Hz
+  over a 30fps camera re-steps the state machine on duplicate frames, which I expected
+  to cause premature firing. Tested both sampling patterns: same hit count, same
+  `peak_t=466.7ms`. The One Euro filter keeps `yf` converging on repeated samples so
+  `vy_n` never collapses to 0. Only peak velocity inflates (0.951 -> clipped 1.0),
+  shifting the loudness mapping. Recorded so nobody "fixes" this twice.
 
 ## [PROGRESS]
 - 2026-08-18T12:04Z [TOOL] Python core + tests complete. py/vdrum: config, filter,

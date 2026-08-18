@@ -48,7 +48,10 @@ export class HandState {
    * IDLE -> DESCENDING on vy_n > V_MIN; track the running peak; FIRE once
    * velocity decays to DECEL_RATIO of the peak; REFRACTORY blocks a re-strike
    * until REFRAC_MS has elapsed AND the velocity has settled back below V_MIN;
-   * a fade-out below V_MIN/2 before decel confirmation cancels.
+   * V_MIN is the ONLY gate on what counts as a strike. A "faded out below
+   * V_MIN/2 -> cancel" branch used to sit here but was unreachable for any
+   * DECEL_RATIO >= 0.5 (it needs peak < V_MIN*0.5/DECEL_RATIO = 0.667 while
+   * DESCENDING requires peak > V_MIN = 0.8). Mirrors py/vdrum/detect.py.
    *
    * The settle test is load-bearing: the One Euro filter keeps "descending"
    * for hundreds of ms after the hand actually stops (its tail catching up),
@@ -137,9 +140,6 @@ export class HandState {
         this.state = "REFRACTORY";
         this.fire_t = t_ms;
         return hit;
-      } else if (vy_n < det.v_min * 0.5) {
-        // Faded out before decel was confirmed: movement, not a strike.
-        this.state = "IDLE";
       }
     } else if (this.state === "REFRACTORY") {
       if (t_ms - this.fire_t > det.refrac_ms && vy_n < det.v_min) {

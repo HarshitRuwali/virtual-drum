@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import itertools
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 
-from .config import Config
+from .config import Config, DetectCfg, FilterCfg, default_config
 from .detect import Track, detect
 from .score import score
 from .zones import ZoneSet
@@ -22,6 +22,30 @@ DEFAULT_GRID: dict[str, list[float]] = {
     "decel_ratio": [0.4, 0.6, 0.8],
     "beta": [0.02, 0.05, 0.10],
 }
+
+# Which config section each grid key belongs to, derived from the dataclasses
+# so adding a field to either one is picked up automatically. The old code
+# hardcoded "beta" as the only filter key, so putting min_cutoff in the grid
+# raised TypeError inside with_detection().
+_FILTER_KEYS = {f.name for f in fields(FilterCfg)}
+_DETECT_KEYS = {f.name for f in fields(DetectCfg)}
+
+
+def _split_overrides(params: dict[str, float]) -> tuple[dict, dict]:
+    det, filt, unknown = {}, {}, []
+    for k, v in params.items():
+        if k in _FILTER_KEYS:
+            filt[k] = v
+        elif k in _DETECT_KEYS:
+            det[k] = v
+        else:
+            unknown.append(k)
+    if unknown:
+        raise KeyError(
+            f"grid key(s) {unknown} match no field of FilterCfg or DetectCfg; "
+            f"known: {sorted(_FILTER_KEYS | _DETECT_KEYS)}"
+        )
+    return det, filt
 
 
 @dataclass
@@ -42,28 +66,40 @@ class Row:
         return d
 
 
-def _pairs(fixtures_dir: Path) -> list[tuple[str, dict, Path]]:
-    """(name, truth, track_path): a fixture is fixtures/<n>.hits.json + tracks/<n>.npz."""
-    truths = {p.stem: json.loads(p.read_text()) for p in sorted(fixtures_dir.glob("*.hits.json"))}
-    tracks = {p.stem: p for p in sorted(Path("tracks").glob("*.npz"))}
+def _pairs(fixtures_dir: Path, tracks_dir: Path) -> list[tuple[str, dict, Path]]:
+    """(name, truth, track_path): fixtures/<n>.hits.json + tracks/<n>.npz.
+
+    `.hits.json` stems come out as "<n>.hits", so strip the extra suffix to
+    match the track stem.
+    """
+    truths = {
+        p.name[: -len(".hits.json")]: json.loads(p.read_text())
+        for p in sorted(fixtures_dir.glob("*.hits.json"))
+    }
+    tracks = {p.stem: p for p in sorted(tracks_dir.glob("*.npz"))}
     return [(name, truths[name], tracks[name]) for name in truths if name in tracks]
 
 
 def run_sweep(fixtures_dir: str | Path = "fixtures", cfg: Config | None = None,
-              zones: ZoneSet | None = None, grid: dict[str, list[float]] | None = None) -> list[Row]:
-    cfg = cfg or Config.load(Path(__file__).resolve().parents[2] / "config" / "default.json")
+              zones: ZoneSet | None = None, grid: dict[str, list[float]] | None = None,
+              tracks_dir: str | Path = "tracks") -> list[Row]:
+    cfg = cfg or default_config()
     grid = grid or DEFAULT_GRID
-    pairs = _pairs(Path(fixtures_dir))
+    pairs = _pairs(Path(fixtures_dir), Path(tracks_dir))
     if not pairs:
         return []
+
+    # Load every track ONCE, outside the grid loop. Re-reading and re-parsing
+    # the .npz per combination (the default grid is 4*3*3 = 36) throws away the
+    # extract/detect split this module exists to exploit (PLAN 9b).
+    loaded = [(name, truth, Track.load(trk)) for name, truth, trk in pairs]
 
     keys = list(grid)
     rows: list[Row] = []
     for combo in itertools.product(*(grid[k] for k in keys)):
         params = dict(zip(keys, combo))
+        det_over, filt_over = _split_overrides(params)
         sweep_cfg = cfg
-        det_over = {k: v for k, v in params.items() if k != "beta"}
-        filt_over = {"beta": params["beta"]} if "beta" in params else {}
         if det_over:
             sweep_cfg = sweep_cfg.with_detection(**det_over)
         if filt_over:
@@ -71,8 +107,7 @@ def run_sweep(fixtures_dir: str | Path = "fixtures", cfg: Config | None = None,
 
         tp = fp = fn = 0
         dts: list[float] = []
-        for name, truth, trk in pairs:
-            track = Track.load(trk)
+        for name, truth, track in loaded:
             hits = detect(track, sweep_cfg, zones)
             gt = [float(h["t_ms"]) for h in truth.get("hits", [])]
             s = score([h.report_t_ms for h in hits], gt, cfg.detection.match_window_ms)

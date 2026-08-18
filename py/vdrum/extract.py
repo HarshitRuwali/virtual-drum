@@ -19,6 +19,84 @@ from .config import Config
 from .detect import Track, Channel
 from .tracker import HandTracker
 
+_FIELDS = ("x", "y", "scale", "conf", "present")
+
+
+class TrackBuilder:
+    """Accumulates per-frame Contacts into equal-length channel arrays.
+
+    THE INVARIANT: every channel is exactly as long as the frame list. detect()
+    walks `range(len(track.t_ms))` and indexes each channel at `i`, so any
+    channel that is short raises IndexError partway through a real clip.
+
+    Two ways that invariant used to break, both fixed here:
+
+      * A hand first detected at frame k (it enters the frame late, or
+        MediaPipe misses the opening frames -- the normal case) started an
+        empty channel, leaving it k samples short forever.
+      * MediaPipe can label BOTH hands with the same handedness, which mapped
+        two contacts onto one channel in a single frame and made it too long.
+        First contact wins; the duplicate is counted and dropped.
+
+    Kept free of cv2/mediapipe so it is unit-testable (py/tests/test_extract.py).
+    """
+
+    def __init__(self) -> None:
+        self.hands: list[str] = []
+        self.data: dict[str, dict[str, list[float]]] = {}
+        self.t_ms: list[float] = []
+        self.dropped_duplicates = 0
+
+    def _ensure(self, hand: str) -> None:
+        if hand not in self.data:
+            pad = len(self.t_ms)  # frames completed before this one
+            self.data[hand] = {f: [0.0] * pad for f in _FIELDS}
+            self.hands.append(hand)
+
+    def add_frame(self, t_ms: float, contacts) -> None:
+        seen: set[str] = set()
+        for c in contacts:
+            if c.hand in seen:
+                self.dropped_duplicates += 1
+                continue
+            self._ensure(c.hand)
+            d = self.data[c.hand]
+            d["x"].append(c.x)
+            d["y"].append(c.y)
+            d["scale"].append(c.scale)
+            d["conf"].append(c.conf)
+            d["present"].append(1.0)
+            seen.add(c.hand)
+        for h in self.data:
+            if h not in seen:
+                d = self.data[h]
+                for f in _FIELDS:
+                    d[f].append(0.0)
+        self.t_ms.append(t_ms)
+
+    def build(self) -> Track:
+        n = len(self.t_ms)
+        if n == 0:
+            raise RuntimeError("no frames added")
+        for h in self.hands:
+            got = len(self.data[h]["present"])
+            if got != n:
+                raise AssertionError(
+                    f"channel {h!r} has {got} samples for {n} frames -- the "
+                    "length invariant in TrackBuilder is broken"
+                )
+        channels = {
+            h: Channel(
+                x=np.asarray(self.data[h]["x"], dtype=np.float64),
+                y=np.asarray(self.data[h]["y"], dtype=np.float64),
+                scale=np.asarray(self.data[h]["scale"], dtype=np.float64),
+                conf=np.asarray(self.data[h]["conf"], dtype=np.float64),
+                present=np.asarray(self.data[h]["present"], dtype=np.uint8),
+            )
+            for h in self.hands
+        }
+        return Track(t_ms=np.asarray(self.t_ms, dtype=np.float64), channels=channels)
+
 
 def extract(video: str | Path, model_path: str | Path, out_path: str | Path,
             cfg: Config, fps_override: float | None = None) -> Track:
@@ -33,16 +111,8 @@ def extract(video: str | Path, model_path: str | Path, out_path: str | Path,
         fps = 30.0
 
     tracker = HandTracker(model_path, cfg)
+    builder = TrackBuilder()
 
-    hands: list[str] = []
-    data: dict[str, dict[str, list[float]]] = {}
-
-    def ensure(hand: str) -> None:
-        if hand not in data:
-            data[hand] = {"x": [], "y": [], "scale": [], "conf": [], "present": []}
-            hands.append(hand)
-
-    t_list: list[float] = []
     idx = 0
     t0 = time.perf_counter()
     while True:
@@ -51,47 +121,21 @@ def extract(video: str | Path, model_path: str | Path, out_path: str | Path,
             break
         t_ms = idx * 1000.0 / fps
         idx += 1
-        seen: set[str] = set()
-        for c in tracker.process(frame, t_ms):
-            ensure(c.hand)
-            d = data[c.hand]
-            d["x"].append(c.x)
-            d["y"].append(c.y)
-            d["scale"].append(c.scale)
-            d["conf"].append(c.conf)
-            d["present"].append(1.0)
-            seen.add(c.hand)
-        for h in data:
-            if h not in seen:
-                d = data[h]
-                d["x"].append(0.0)
-                d["y"].append(0.0)
-                d["scale"].append(0.0)
-                d["conf"].append(0.0)
-                d["present"].append(0.0)
-        t_list.append(t_ms)
+        builder.add_frame(t_ms, tracker.process(frame, t_ms))
     cap.release()
 
-    n = len(t_list)
-    if n == 0:
+    if not builder.t_ms:
         raise RuntimeError(f"no frames decoded from {video}")
-    channels = {
-        h: Channel(
-            x=np.asarray(data[h]["x"], dtype=np.float64),
-            y=np.asarray(data[h]["y"], dtype=np.float64),
-            scale=np.asarray(data[h]["scale"], dtype=np.float64),
-            conf=np.asarray(data[h]["conf"], dtype=np.float64),
-            present=np.asarray(data[h]["present"], dtype=np.uint8),
-        )
-        for h in hands
-    }
-    track = Track(t_ms=np.asarray(t_list, dtype=np.float64), channels=channels)
+    track = builder.build()
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     track.save(out_path)
 
+    n = len(builder.t_ms)
     elapsed = (time.perf_counter() - t0) * 1000.0
+    dup = f", {builder.dropped_duplicates} duplicate-handedness contacts dropped" \
+        if builder.dropped_duplicates else ""
     print(f"[extract] {video}: {n} frames @ {fps:.1f} fps -> {out_path} "
-          f"({elapsed / max(n, 1):.2f} ms/frame)", flush=True)
+          f"({elapsed / max(n, 1):.2f} ms/frame{dup})", flush=True)
     return track
