@@ -1,0 +1,28 @@
+{
+  "filter": {
+    "min_cutoff": 1.0,
+    "beta": 0.05,
+    "d_cutoff": 1.0
+  },
+  "detection": {
+    "v_min": 0.8,
+    "v_max": 8.0,
+    "decel_ratio": 0.6,
+    "refrac_ms": 60.0,
+    "offset_ms": 25.0,
+    "min_conf": 0.5,
+    "match_window_ms": 50.0
+  },
+  "hand": {
+    "track_landmark": 9,
+    "palm_a": 5,
+    "palm_b": 17,
+    "num_hands": 2
+  },
+  "notes": {
+    "units": "v_min/v_max in palm-widths/second; all *_ms in milliseconds",
+    "v_min": "below this is hand movement, not a strike (PLAN 5.2)",
+    "offset_ms": "peak->strike lead; replaced by a per-user fit in Phase 5 (PLAN 8)",
+    "status": "all values are starting points, NOT tuned values (PLAN 5.2)"
+  }
+}

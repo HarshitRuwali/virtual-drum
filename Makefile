@@ -1,0 +1,55 @@
+# virtual-drum -- gates and helpers.
+#
+# Container-first (PLAN 1, 9.1): Python runs in a python:3.14-slim container,
+# nothing is installed on the host. TS runs on node (host) -- it is a pure
+# ES-module port with no native deps.
+
+PY_IMG     ?= virtual-drum:latest
+PY_DIR     := py
+WEB_DIR    := web
+FIXTURES   := web/test/fixtures
+
+.PHONY: image py-test parity typecheck test assets
+
+image:
+	docker build -t $(PY_IMG) -f docker/Dockerfile docker/
+
+# Python core tests (PLAN 7.1), inside the container.
+py-test: image
+	docker run --rm \
+		-v $(PWD)/$(PY_DIR):/w/$(PY_DIR):ro \
+		-v $(PWD)/config:/w/config:ro \
+		$(PY_IMG) \
+		bash -lc "pip install -q --no-cache-dir pytest && cd /w && python -m pytest -p no:cacheprovider $(PY_DIR)/tests -v"
+
+# Regenerate the parity fixtures from the PYTHON implementation.
+fixtures: image
+	docker run --rm \
+		-v $(PWD)/$(PY_DIR):/w/$(PY_DIR) \
+		-v $(PWD)/config:/w/config \
+		-v $(PWD)/$(FIXTURES):/w/$(FIXTURES) \
+		$(PY_IMG) \
+		bash -lc "pip install -q --no-cache-dir pytest && cd /w && python -m pytest $(PY_DIR)/tests/test_parity.py -k write_fixtures"
+
+# THE parity gate (PLAN 7.2): TS detect vs Python-expected, bit-exact.
+parity:
+	cd $(WEB_DIR) && npm install --no-audit --no-fund && npx vitest run
+
+typecheck:
+	cd $(WEB_DIR) && npx tsc --noEmit
+
+# Full gate: both sides, every time you touch the core.
+test: py-test parity typecheck
+
+# Download the hand model (7.8 MB, size verified per PLAN 8.4) and copy the
+# wasm runtime, so the app works offline (no CDN dependency).
+assets:
+	mkdir -p assets $(WEB_DIR)/public/assets $(WEB_DIR)/public/wasm
+	test -f assets/hand_landmarker.task || \
+		wget -qO assets/hand_landmarker.task \
+		"https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
+	test "$$(stat -c%s assets/hand_landmarker.task)" = "7819105" && echo "model OK (7819105 bytes)"
+	cp assets/hand_landmarker.task $(WEB_DIR)/public/assets/
+	cp config/default.json config/zones.json $(WEB_DIR)/public/config/
+	cp $(WEB_DIR)/node_modules/@mediapipe/tasks-vision/wasm/*.wasm $(WEB_DIR)/public/wasm/ || \
+		echo "wasm copy failed: run 'npm install' in $(WEB_DIR)/ first"

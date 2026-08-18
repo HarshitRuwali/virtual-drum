@@ -1,0 +1,11 @@
+{
+  "aspect": "16:9",
+  "note": "Default zone rectangles in aspect-corrected normalized space (X = x * W/H, Y = y), assumed 16:9. Calibrate per setup (PLAN 6.1) -- calibration overrides these. First match in list order wins.",
+  "zones": [
+    { "id": "kick",   "x": [0.66, 1.12], "y": [0.84, 1.00], "scale": [0.0, 1.0], "sample": "kick" },
+    { "id": "snare",  "x": [0.60, 1.18], "y": [0.50, 0.84], "scale": [0.0, 1.0], "sample": "snare" },
+    { "id": "hi-hat", "x": [0.08, 0.55], "y": [0.45, 0.78], "scale": [0.0, 1.0], "sample": "hi-hat" },
+    { "id": "tom",    "x": [1.22, 1.62], "y": [0.45, 0.78], "scale": [0.0, 1.0], "sample": "tom" },
+    { "id": "ride",   "x": [1.40, 1.78], "y": [0.18, 0.45], "scale": [0.0, 1.0], "sample": "ride" }
+  ]
+}
