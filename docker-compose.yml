@@ -1,0 +1,53 @@
+# Dev stack for the browser app. `make serve` is the entry point; it fills in
+# the uid/gid and the LAN addresses this box actually has.
+#
+# Two services, in order:
+#   certs -- issues the self-signed cert, then exits (PLAN 9)
+#   web   -- vite dev server, bound to 0.0.0.0 over TLS
+#
+# The source tree is bind-mounted rather than baked into an image: this serves a
+# live editable tree, and the two large gitignored payloads it needs
+# (web/public/assets/hand_landmarker.task, web/public/wasm/) are produced by
+# `make assets` on the host and would otherwise have to be rebuilt per image.
+name: virtual-drum
+
+x-node: &node
+  image: node:22-bookworm
+  # Match the invoking user so npm does not leave root-owned files in the
+  # bind-mounted tree. Defaults keep a bare `docker compose up` working.
+  user: "${VD_UID:-1000}:${VD_GID:-1000}"
+  volumes:
+    - ./:/w
+  environment:
+    # node:22-bookworm has no home for uid 1000 once `user:` overrides node's
+    # own; npm needs somewhere writable for its cache or install fails.
+    HOME: /tmp
+    npm_config_cache: /tmp/.npm
+
+services:
+  certs:
+    <<: *node
+    working_dir: /w
+    # openssl is local work; nothing here should be able to reach the network.
+    network_mode: none
+    environment:
+      HOME: /tmp
+      VD_CERT_DIR: /w/docker/certs
+      VD_HOSTS: "${VD_HOSTS:-}"
+    command: ["bash", "/w/docker/mkcert.sh"]
+
+  web:
+    <<: *node
+    working_dir: /w/web
+    depends_on:
+      certs:
+        condition: service_completed_successfully
+    environment:
+      HOME: /tmp
+      npm_config_cache: /tmp/.npm
+      VD_CERT_DIR: /w/docker/certs
+      VD_PORT: "${VD_PORT:-5199}"
+    ports:
+      - "${VD_PORT:-5199}:${VD_PORT:-5199}"
+    # `exec` so vite is PID 1's child and Ctrl-C actually stops it.
+    command: ["bash", "-lc", "npm install --no-audit --no-fund && exec npx vite"]

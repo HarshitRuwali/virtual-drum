@@ -6,3 +6,5 @@ __pycache__/
 assets/hand_landmarker.task
 web/public/wasm/
 *.task
+docker/certs/
+.agent/

@@ -99,6 +99,16 @@ export class Tracker {
   }
 
   async start(video: HTMLVideoElement): Promise<void> {
+    // On an insecure origin Chrome does not define `navigator.mediaDevices` at
+    // all, so the line below would throw "Cannot read properties of undefined",
+    // which says nothing about the actual cause. Serving over http from a LAN
+    // address is the easiest way to land here; `make serve` issues a cert.
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+      throw new Error(
+        `camera blocked: ${location.origin} is not a secure context. ` +
+          "Use https (make serve) or http://localhost.",
+      );
+    }
     this.stream = await navigator.mediaDevices.getUserMedia({
       // 60 fps halves the peak->decision lag and the duplicate-frame rate
       // (PLAN 3.2); browsers silently fall back to 30 if unsupported.

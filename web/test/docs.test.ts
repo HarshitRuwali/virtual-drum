@@ -34,11 +34,22 @@ const SOURCES = [
   ...walk(path.join(ROOT, "web", "src"), [".ts"]),
   ...walk(path.join(ROOT, "web", "test"), [".ts"]),
   path.join(ROOT, "Makefile"),
-  ...walk(path.join(ROOT, "docker"), [".py", "Dockerfile"]),
+  path.join(ROOT, "docker-compose.yml"),
+  ...walk(path.join(ROOT, "docker"), [".py", ".sh", "Dockerfile"]),
 ].filter((f) => !f.endsWith(SELF));
 
 const PLAN = readFileSync(path.join(ROOT, "PLAN.md"), "utf8");
 const PLAN_UI = readFileSync(path.join(ROOT, "PLAN-UI.md"), "utf8");
+const README = readFileSync(path.join(ROOT, "README.md"), "utf8");
+
+/** GitHub's heading slug: lowercase, drop punctuation, spaces to hyphens. */
+function slug(heading: string): string {
+  return heading
+    .trim()
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, "")
+    .replace(/\s+/g, "-");
+}
 
 /** Heading numbers PLAN.md actually defines, e.g. "3.1", "9b". */
 const HEADINGS = new Set(
@@ -75,7 +86,10 @@ describe("docs consistency", () => {
     const targets = new Set(
       [...mk.matchAll(/^([a-z][\w-]*):/gm)].map((m) => m[1]),
     );
-    for (const t of ["image", "py-test", "fixtures", "parity", "typecheck", "test", "assets"]) {
+    for (const t of [
+      "image", "py-test", "fixtures", "parity", "typecheck", "test", "assets",
+      "serve", "serve-stop",
+    ]) {
       expect(targets.has(t), `Makefile target ${t}`).toBe(true);
     }
     // `fixtures` must invoke the real generator, not the pytest case that
@@ -113,5 +127,123 @@ describe("docs consistency", () => {
       expect(specs, `audio.ts SPECS has no ${z.id}`).toContain(z.id);
       expect(looks, `ui.ts LOOKS has no ${z.id}`).toContain(z.id);
     }
+  });
+  it("the compose stack the Makefile drives is the one that exists", () => {
+    const mk = readFileSync(path.join(ROOT, "Makefile"), "utf8");
+    const compose = readFileSync(path.join(ROOT, "docker-compose.yml"), "utf8");
+    const services = new Set(
+      [...compose.matchAll(/^ {2}([a-z][\w-]*):$/gm)].map((m) => m[1]),
+    );
+    expect(services.size).toBeGreaterThan(0);
+    // `docker compose up <name>` with a name nobody defines fails only when the
+    // user runs it, which is exactly the moment they wanted to demo the thing.
+    const invocations = [
+      ...mk.matchAll(
+        /(?:docker compose|\$\(COMPOSE\)) (?:up|run --rm) (?:--\S+ )*([a-z][\w-]*)/g,
+      ),
+    ];
+    // Without this the loop below passes by finding nothing, which is what
+    // happened when the Makefile moved from a literal `docker compose` to
+    // $(COMPOSE) and the pattern silently stopped matching.
+    expect(invocations.length).toBeGreaterThan(1);
+
+    // ...and the variable those invocations go through has to be defined.
+    // Renaming the definition alone leaves the recipe expanding to an empty
+    // string, so `make serve` runs ` up web` and the pattern above still
+    // matches happily.
+    const defined = new Set([...mk.matchAll(/^([A-Z][A-Z0-9_]*)\s*[:?]?=/gm)].map((m) => m[1]));
+    defined.add("PWD"); // provided by make itself, never assigned here
+    for (const m of mk.matchAll(/\$\(([A-Z][A-Z0-9_]*)\)/g)) {
+      expect(defined.has(m[1]), `Makefile uses $(${m[1]}) but never defines it`).toBe(true);
+    }
+    for (const m of invocations) {
+      expect(services.has(m[1]), `docker-compose.yml has no service ${m[1]}`).toBe(true);
+    }
+    // Every host path the stack executes must be present, and executable.
+    for (const m of compose.matchAll(/"\/w\/(docker\/[\w./-]+)"/g)) {
+      expect(existsSync(path.join(ROOT, m[1])), m[1]).toBe(true);
+    }
+  });
+
+  it("the cert filenames mkcert.sh writes are the ones vite reads", () => {
+    // Drift here is silent and expensive: vite finds no cert, quietly falls
+    // back to http, and the camera stops working on every non-localhost origin
+    // with nothing in the log to say why.
+    const sh = readFileSync(path.join(ROOT, "docker", "mkcert.sh"), "utf8");
+    const vite = readFileSync(path.join(ROOT, "web", "vite.config.ts"), "utf8");
+    for (const f of ["dev-key.pem", "dev-cert.pem"]) {
+      expect(sh, `mkcert.sh does not write ${f}`).toContain(f);
+      expect(vite, `vite.config.ts does not read ${f}`).toContain(f);
+    }
+    // Both sides must agree on the directory, and both take it from the same
+    // env var so compose can point them somewhere else together.
+    expect(sh).toContain("VD_CERT_DIR");
+    expect(vite).toContain("VD_CERT_DIR");
+  });
+
+  it("the private key can never be committed", () => {
+    const ignore = readFileSync(path.join(ROOT, ".gitignore"), "utf8")
+      .split("\n")
+      .map((l) => l.trim());
+    const sh = readFileSync(path.join(ROOT, "docker", "mkcert.sh"), "utf8");
+    const dir = /VD_CERT_DIR:-([\w./-]+)/.exec(sh)?.[1];
+    expect(dir, "mkcert.sh has no default cert dir").toBeTruthy();
+    expect(ignore, `.gitignore does not cover ${dir}`).toContain(`${dir}/`);
+  });
+
+  it("the served port is the same number in all three places", () => {
+    const mk = readFileSync(path.join(ROOT, "Makefile"), "utf8");
+    const compose = readFileSync(path.join(ROOT, "docker-compose.yml"), "utf8");
+    const vite = readFileSync(path.join(ROOT, "web", "vite.config.ts"), "utf8");
+    const port = /^VD_PORT\s*\?=\s*(\d+)/m.exec(mk)?.[1];
+    expect(port, "Makefile defines no VD_PORT").toBeTruthy();
+    // A published port that does not match the port vite binds gives a
+    // connection that hangs rather than an error anyone can read.
+    expect(compose).toContain(`"\${VD_PORT:-${port}}:\${VD_PORT:-${port}}"`);
+    expect(vite).toContain(`process.env.VD_PORT ?? ${port}`);
+  });
+  it("every make target the README advertises exists", () => {
+    const mk = readFileSync(path.join(ROOT, "Makefile"), "utf8");
+    const targets = new Set([...mk.matchAll(/^([a-z][\w-]*):/gm)].map((m) => m[1]));
+    const named = [...README.matchAll(/`make ([a-z][\w-]*)/g)].map((m) => m[1]);
+    // A README is the first thing a new person types from. A target that does
+    // not exist turns "start here" into `No rule to make target`.
+    expect(named.length).toBeGreaterThan(4);
+    for (const t of named) {
+      expect(targets.has(t), `README says \`make ${t}\`, Makefile has no such target`).toBe(true);
+    }
+  });
+
+  it("every link and path in the README resolves", () => {
+    const missing: string[] = [];
+    for (const m of README.matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) {
+      const [target, anchor] = m[1].split("#");
+      if (/^https?:/.test(target)) continue;
+      const abs = path.join(ROOT, target);
+      if (!existsSync(abs)) {
+        missing.push(m[1]);
+        continue;
+      }
+      // A link to a heading that was reworded lands the reader at the top of a
+      // long document with no sign anything went wrong.
+      if (anchor) {
+        const heads = [...readFileSync(abs, "utf8").matchAll(/^#{1,6}\s+(.+)$/gm)];
+        if (!heads.some((h) => slug(h[1]) === anchor)) missing.push(m[1]);
+      }
+    }
+    expect(missing).toEqual([]);
+
+    // Bare repo paths named in prose or tables, outside link syntax.
+    const bad: string[] = [];
+    for (const m of README.matchAll(/`((?:py|web|config|docker|assets)\/[\w./-]*)`/g)) {
+      if (!existsSync(path.join(ROOT, m[1]))) bad.push(m[1]);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("the README quotes the port the stack actually publishes", () => {
+    const mk = readFileSync(path.join(ROOT, "Makefile"), "utf8");
+    const port = /^VD_PORT\s*\?=\s*(\d+)/m.exec(mk)?.[1];
+    expect(README, `README does not mention port ${port}`).toContain(String(port));
   });
 });

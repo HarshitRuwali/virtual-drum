@@ -9,7 +9,7 @@ PY_DIR     := py
 WEB_DIR    := web
 FIXTURES   := web/test/fixtures
 
-.PHONY: image py-test parity typecheck test assets
+.PHONY: image py-test fixtures parity typecheck test assets deps serve serve-stop
 
 image:
 	docker build -t $(PY_IMG) -f docker/Dockerfile docker/
@@ -44,9 +44,39 @@ typecheck:
 # Full gate: both sides, every time you touch the core.
 test: py-test parity typecheck
 
+# ---- running the app -------------------------------------------------------
+#
+# Canonical way to start the browser app. HTTPS, because getUserMedia refuses to
+# run on a non-localhost http origin (see docker/mkcert.sh), and bound to
+# 0.0.0.0 so the machine with the camera can reach it.
+#
+# The certificate is self-signed, so the browser shows a warning once per host:
+# proceed through it. The camera works after that -- a cert error does not stop
+# an origin from being a secure context.
+#
+# VD_HOSTS is every address this box answers on, so one cert covers LAN and
+# tailscale alike. Add your own with `make serve VD_HOSTS=drums.local`.
+VD_PORT  ?= 5199
+VD_HOSTS ?= $(shell hostname -I 2>/dev/null | tr ' ' ',' | sed 's/,*$$//')
+
+# Run as the invoking user so npm leaves no root-owned files in the tree.
+COMPOSE = VD_UID=$(shell id -u) VD_GID=$(shell id -g) \
+	  VD_PORT=$(VD_PORT) VD_HOSTS="$(VD_HOSTS)" docker compose
+
+serve:
+	$(COMPOSE) up web
+
+serve-stop:
+	docker compose down --remove-orphans
+
+# Web dependencies, in the container, so a fresh clone needs only docker.
+# --no-deps skips cert issuance: installing does not need a server.
+deps:
+	$(COMPOSE) run --rm --no-deps web bash -lc "npm install --no-audit --no-fund"
+
 # Download the hand model (7.8 MB, size verified per PLAN 2) and copy the
 # wasm runtime, so the app works offline (no CDN dependency).
-assets:
+assets: deps
 	mkdir -p assets $(WEB_DIR)/public/assets $(WEB_DIR)/public/wasm
 	test -f assets/hand_landmarker.task || \
 		wget -qO assets/hand_landmarker.task \
@@ -54,5 +84,4 @@ assets:
 	test "$$(stat -c%s assets/hand_landmarker.task)" = "7819105" && echo "model OK (7819105 bytes)"
 	cp assets/hand_landmarker.task $(WEB_DIR)/public/assets/
 	cp config/default.json config/zones.json $(WEB_DIR)/public/config/
-	cp $(WEB_DIR)/node_modules/@mediapipe/tasks-vision/wasm/*.wasm $(WEB_DIR)/public/wasm/ || \
-		echo "wasm copy failed: run 'npm install' in $(WEB_DIR)/ first"
+	cp $(WEB_DIR)/node_modules/@mediapipe/tasks-vision/wasm/*.wasm $(WEB_DIR)/public/wasm/
