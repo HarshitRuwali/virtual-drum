@@ -5,46 +5,279 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>virtual drum</title>
     <style>
-      html, body { margin: 0; height: 100%; background: #0b1020; color: #e2e8f0;
-        font-family: system-ui, sans-serif; }
+      :root {
+        --bg: #05070d;
+        --panel: rgba(13, 18, 30, 0.72);
+        --line: rgba(148, 163, 184, 0.18);
+        --ink: #e6ecf7;
+        --dim: #8b9ab3;
+        --gold: #f0c14b;
+        --good: #4ade80;
+        --warn: #fbbf24;
+        --bad: #f87171;
+        --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        overflow: hidden; -webkit-font-smoothing: antialiased;
+      }
       #wrap { position: relative; width: 100vw; height: 100vh; }
-      video, canvas { position: absolute; inset: 0; width: 100%; height: 100%;
-        object-fit: cover; }
-      video { transform: scaleX(-1); visibility: hidden; }
-      #top { position: absolute; left: 0; right: 0; bottom: 0; padding: 12px 16px;
-        display: flex; gap: 16px; align-items: center; background: rgba(11, 16, 32, 0.7);
-        backdrop-filter: blur(6px); }
-      button { padding: 8px 14px; border-radius: 8px; border: 1px solid #334155;
-        background: #1e293b; color: #e2e8f0; cursor: pointer; font-size: 14px; }
-      button:hover { background: #273449; }
-      label { font-size: 13px; color: #94a3b8; }
-      input[type="range"] { width: 160px; }
-      #status { margin-left: auto; font-size: 13px; color: #94a3b8; }
+      #video { position: absolute; width: 1px; height: 1px; opacity: 0;
+        pointer-events: none; }
+      #stage { position: absolute; inset: 0; width: 100%; height: 100%;
+        display: block; }
+
+      /* ---- shared panel chrome ---- */
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        backdrop-filter: blur(14px) saturate(1.2);
+        box-shadow: 0 10px 34px rgba(0, 0, 0, 0.45);
+      }
+
+      /* ---- top bar ---- */
+      #top {
+        position: absolute; top: 14px; left: 14px; right: 14px;
+        display: flex; align-items: center; gap: 12px; pointer-events: none;
+      }
+      #brand {
+        flex: none; display: flex; align-items: baseline; gap: 9px; padding: 9px 15px;
+        letter-spacing: 0.16em; font-size: 12px; text-transform: uppercase;
+        pointer-events: auto;
+      }
+      #brand b { color: var(--gold); letter-spacing: 0.2em; }
+      #brand span { color: var(--dim); letter-spacing: 0.06em;
+        text-transform: none; font-size: 11px; }
+
+      #badges { margin-left: auto; display: flex; gap: 7px; pointer-events: auto; }
+      .badge {
+        font-family: var(--mono); font-size: 11px; padding: 6px 10px;
+        border-radius: 9px; border: 1px solid var(--line);
+        background: rgba(13, 18, 30, 0.72); color: var(--dim);
+        white-space: nowrap;
+      }
+      .badge b { color: var(--ink); font-weight: 600; }
+      .badge.ok { border-color: rgba(74, 222, 128, 0.4); color: #a7f3c8; }
+      .badge.ok b { color: var(--good); }
+      .badge.degraded { border-color: rgba(251, 191, 36, 0.4); color: #fde9b8; }
+      .badge.degraded b { color: var(--warn); }
+
+      /* ---- hit counters ----
+         These live in the TOP STRIP, not down the left edge: the upper-left of
+         the stage is where the crash cymbal is drawn, and a column of chips
+         sat right on top of it. */
+      #counts {
+        display: flex; gap: 6px; pointer-events: none; flex-wrap: wrap;
+      }
+      .count {
+        font-family: var(--mono); font-size: 11px; padding: 6px 9px;
+        border-radius: 9px; border: 1px solid var(--line);
+        background: rgba(13, 18, 30, 0.72); color: var(--dim);
+        display: flex; gap: 8px; white-space: nowrap;
+        transition: border-color 90ms linear, color 90ms linear,
+                    background-color 90ms linear;
+      }
+      .count.lit {
+        border-color: var(--gold); color: #fff6dd;
+        background: rgba(240, 193, 75, 0.22);
+        box-shadow: 0 0 14px rgba(240, 193, 75, 0.35);
+      }
+      .count i { font-style: normal; color: var(--ink); font-weight: 600; }
+      .count.lit i { color: #fffdf6; }
+
+      /* ---- timing meter ---- */
+      /* Top centre, not bottom centre: the bottom of the stage is where the
+         kick drum is drawn, and a 560px panel there hid it completely. The
+         gap between the crash and the ride is the one part of the kit with
+         nothing in it. */
+      #meter {
+        position: absolute; left: 50%; transform: translateX(-50%);
+        top: 62px; width: min(560px, 62vw); padding: 13px 18px 15px;
+        pointer-events: none;
+      }
+      #meter-head {
+        display: flex; align-items: baseline; gap: 10px; margin-bottom: 9px;
+      }
+      #dt { font-family: var(--mono); font-size: 27px; font-weight: 600;
+        line-height: 1; color: var(--dim); font-variant-numeric: tabular-nums; }
+      #dt-word { font-size: 12px; letter-spacing: 0.16em;
+        text-transform: uppercase; color: var(--dim); }
+      #dt-sub { margin-left: auto; font-family: var(--mono); font-size: 11px;
+        color: var(--dim); text-align: right; }
+      #scale { position: relative; height: 26px; }
+      #scale-track {
+        position: absolute; top: 11px; left: 0; right: 0; height: 4px;
+        border-radius: 2px;
+        background: linear-gradient(90deg,
+          rgba(248,113,113,0.55) 0%, rgba(251,191,36,0.5) 26%,
+          rgba(74,222,128,0.65) 50%, rgba(251,191,36,0.5) 74%,
+          rgba(248,113,113,0.55) 100%);
+      }
+      #scale-centre { position: absolute; top: 4px; left: 50%; width: 2px;
+        height: 18px; background: rgba(230, 236, 247, 0.75); }
+      .ghost, #needle {
+        position: absolute; top: 5px; width: 2px; height: 16px;
+        margin-left: -1px; border-radius: 1px;
+      }
+      .ghost { background: rgba(230, 236, 247, 0.28); }
+      #needle { top: 2px; height: 22px; width: 3px; margin-left: -1.5px;
+        background: var(--ink); box-shadow: 0 0 10px rgba(255,255,255,0.55);
+        transition: left 70ms ease-out; }
+      #scale-ends {
+        display: flex; justify-content: space-between; font-family: var(--mono);
+        font-size: 10px; color: var(--dim); margin-top: 1px;
+      }
+
+      /* ---- transport ---- */
+      #bar {
+        position: absolute; left: 50%; transform: translateX(-50%);
+        bottom: 16px; display: flex; align-items: center; gap: 16px;
+        padding: 11px 16px;
+      }
+      button {
+        white-space: nowrap; padding: 9px 15px; border-radius: 10px; border: 1px solid var(--line);
+        background: linear-gradient(180deg, #232c3d, #161d2b);
+        color: var(--ink); cursor: pointer; font-size: 13px; font-weight: 500;
+      }
+      button:hover:not(:disabled) { border-color: rgba(240,193,75,0.5); }
+      button:disabled { opacity: 0.4; cursor: default; }
+      button.on { background: linear-gradient(180deg, #f0c14b, #c99a24);
+        color: #1a1206; border-color: #f0c14b; }
+      label { font-size: 12px; color: var(--dim); display: flex;
+        align-items: center; gap: 8px; white-space: nowrap; }
+      input[type="range"] { width: 120px; accent-color: var(--gold); }
+      .val { font-family: var(--mono); color: var(--ink); min-width: 34px; }
+      #beats { display: flex; gap: 6px; }
+      .lamp {
+        width: 10px; height: 10px; border-radius: 50%;
+        background: rgba(148, 163, 184, 0.22);
+        border: 1px solid rgba(148, 163, 184, 0.3);
+      }
+      .lamp.on { background: var(--gold); border-color: var(--gold);
+        box-shadow: 0 0 12px rgba(240, 193, 75, 0.85); }
+      .lamp.accent.on { background: #fff3d0; box-shadow: 0 0 16px var(--gold); }
+      .sep { width: 1px; height: 26px; background: var(--line); }
+
+      /* ---- splash ---- */
+      #splash {
+        position: absolute; inset: 0; display: grid; place-items: center;
+        background: radial-gradient(60% 60% at 50% 42%,
+          rgba(11,16,28,0.86), rgba(5,7,13,0.97));
+        z-index: 5;
+      }
+      #card { padding: 30px 34px; max-width: 430px; text-align: center; }
+      #card h1 { margin: 0 0 6px; font-size: 25px; letter-spacing: 0.02em; }
+      #card h1 em { font-style: normal; color: var(--gold); }
+      #card p { margin: 0 0 18px; color: var(--dim); font-size: 13px;
+        line-height: 1.6; }
+      #card ul { margin: 0 0 20px; padding: 0; list-style: none;
+        text-align: left; font-size: 12.5px; color: var(--dim); }
+      #card li { padding: 5px 0; border-bottom: 1px solid var(--line); }
+      #card li b { color: var(--ink); font-weight: 500; }
+      #card kbd {
+        font-family: var(--mono); font-size: 11px; padding: 2px 6px;
+        border: 1px solid var(--line); border-radius: 5px; color: var(--ink);
+        background: rgba(255,255,255,0.05);
+      }
+      #go { padding: 12px 30px; font-size: 15px;
+        background: linear-gradient(180deg, #f0c14b, #c99a24);
+        color: #1a1206; border-color: #f0c14b; font-weight: 600; }
+      #status { margin-top: 14px; font-size: 12px; color: var(--dim);
+        font-family: var(--mono); min-height: 16px; }
+      #status.err { color: var(--bad); }
     </style>
   </head>
   <body>
     <div id="wrap">
       <video id="video" muted playsinline></video>
-      <canvas id="zones"></canvas>
+      <canvas id="stage"></canvas>
+
       <div id="top">
-        <button id="start">start</button>
-        <button id="metro" disabled>start metronome</button>
-        <label>bpm <input id="bpm" type="range" min="40" max="200" value="80" disabled />
-          <span id="bpm-label">80</span></label>
-        <span id="status">press start</span>
+        <div id="brand" class="panel"><b>virtual drum</b><span>practice</span></div>
+        <div id="counts"></div>
+        <div id="badges">
+          <div class="badge" id="b-clock">clock <b>--</b></div>
+          <div class="badge" id="b-audio">audio <b>--</b></div>
+          <div class="badge" id="b-cam">cam <b>--</b></div>
+        </div>
+      </div>
+
+      <div id="meter" class="panel">
+        <div id="meter-head">
+          <div id="dt">--</div>
+          <div id="dt-word">waiting for a beat</div>
+          <div id="dt-sub">spread --<br />cal --</div>
+        </div>
+        <div id="scale">
+          <div id="scale-track"></div>
+          <div id="scale-centre"></div>
+          <div id="ghosts"></div>
+          <div id="needle" style="left: 50%"></div>
+        </div>
+        <div id="scale-ends"><span>-60 ms early</span><span>on</span><span>late +60 ms</span></div>
+      </div>
+
+      <div id="bar" class="panel">
+        <button id="metro" disabled>metronome</button>
+        <div id="beats">
+          <div class="lamp accent"></div><div class="lamp"></div>
+          <div class="lamp"></div><div class="lamp"></div>
+        </div>
+        <div class="sep"></div>
+        <label>bpm
+          <input id="bpm" type="range" min="40" max="200" step="1" value="80" disabled />
+          <span class="val" id="bpm-label">80</span></label>
+        <label>vol
+          <input id="vol" type="range" min="0" max="100" step="1" value="85" disabled /></label>
+        <div class="sep"></div>
+        <button id="zones-btn" disabled>show zones</button>
+      </div>
+
+      <div id="splash">
+        <div id="card" class="panel">
+          <h1>virtual <em>drum</em></h1>
+          <p>Play a six-piece kit in the air in front of your webcam.
+             Sit back far enough that your arms fit in frame.</p>
+          <ul>
+            <li><b>Left hand</b> hi-hat and crash, on your left</li>
+            <li><b>Right hand</b> rack tom and ride, on your right</li>
+            <li><b>Either hand</b> snare, in the middle</li>
+            <li><b>Kick</b> <kbd>space</kbd>, because your feet are not in frame</li>
+          </ul>
+          <button id="go">allow camera and play</button>
+          <div id="status">nothing is uploaded; all processing is on this device</div>
+        </div>
       </div>
     </div>
+
     <script type="module">
-      import { startApp } from "/src/main.ts";
-      document.getElementById("start").addEventListener("click", () => {
-        const btn = document.getElementById("start");
-        btn.disabled = true;
-        document.getElementById("metro").disabled = false;
-        document.getElementById("bpm").disabled = false;
-        void startApp().catch((err) => {
-          document.getElementById("status").textContent = `error: ${String(err)}`;
-          btn.disabled = false;
-        });
+      const go = document.getElementById("go");
+      const status = document.getElementById("status");
+      // `?demo` runs the stage with a scripted groove and no camera: a look at
+      // the kit before granting access, and the only way to review the
+      // renderer on a machine without a webcam.
+      const demo = new URLSearchParams(location.search).has("demo");
+      if (demo) {
+        go.textContent = "play demo groove";
+        status.textContent = "demo mode: the camera is not used";
+      }
+      go.addEventListener("click", async () => {
+        go.disabled = true;
+        status.classList.remove("err");
+        status.textContent = "starting…";
+        const start = demo
+          ? (await import("/src/demo.ts")).startDemo
+          : (await import("/src/main.ts")).startApp;
+        start((msg) => { status.textContent = msg; })
+          .then(() => { document.getElementById("splash").remove(); })
+          .catch((err) => {
+            status.classList.add("err");
+            status.textContent = String(err && err.message ? err.message : err);
+            go.disabled = false;
+          });
       });
     </script>
   </body>

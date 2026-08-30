@@ -50,15 +50,25 @@ export class Metronome {
 
   /** True when the precise clock bridge is available (UI honesty). */
   get hasOutputTimestamp(): boolean {
+    return this.bridge() !== null;
+  }
+
+  /** `getOutputTimestamp()` as a usable pair, or null. Both fields are
+   * OPTIONAL in the spec and are 0/absent before the device has produced any
+   * audio, so an unchecked read silently maps every beat to the epoch. */
+  private bridge(): { contextTime: number; performanceTime: number } | null {
     const ots = this.ctx.getOutputTimestamp?.();
-    return !!ots && ots.contextTime > 0;
+    const c = ots?.contextTime;
+    const p = ots?.performanceTime;
+    if (c === undefined || p === undefined || c <= 0 || p <= 0) return null;
+    return { contextTime: c, performanceTime: p };
   }
 
   /** Audio-context time -> performance.now() time, latency compensated. */
   perfTimeForContextTime(t: number): number {
-    const ots = this.ctx.getOutputTimestamp?.();
-    if (ots && ots.contextTime > 0 && ots.performanceTime > 0) {
-      return ots.performanceTime + (t - ots.contextTime) * 1000;
+    const b = this.bridge();
+    if (b) {
+      return b.performanceTime + (t - b.contextTime) * 1000;
     }
     // Fallback: fixed epoch, with output latency added by hand so the reported
     // instant is when the click is AUDIBLE rather than when it was scheduled.

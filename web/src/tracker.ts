@@ -29,8 +29,13 @@ import type { Config } from "./config";
 
 export interface RawHand {
   hand: string; // "L" | "R" (user's actual hand)
-  x: number; // normalized, un-mirrored
-  y: number;
+  /** ASPECT-CORRECTED, un-mirrored X: `landmark.x * (videoWidth/videoHeight)`,
+   * so it spans 0..1.778 on a 16:9 camera. Zones are defined in this space
+   * (config/zones.json, PLAN 6.1) because a zone must be square-ish in the
+   * REAL world, and normalized x/y have different pixel scales. Mirroring for
+   * display happens at render time only (PLAN 3.5). */
+  x: number;
+  y: number; // normalized image y (already isotropic with the corrected x)
   scale: number; // palm width in normalized units (depth proxy)
   conf: number;
 }
@@ -69,6 +74,9 @@ export class Tracker {
   private stopped = false;
   /** False when the browser lacks rVFC and we fell back to rAF (PLAN 3.1). */
   usingFrameClock = false;
+  /** videoWidth/videoHeight, re-read per frame (it is 0 until metadata loads
+   * and can change if the track renegotiates). 16:9 until known. */
+  aspect = 16 / 9;
 
   constructor(cfg: Config) {
     this.cfg = cfg;
@@ -146,6 +154,12 @@ export class Tracker {
     }
     return () => {
       this.stopped = true;
+      if (this.handle !== null) {
+        // Leaving the callback queued keeps the landmarker alive across a
+        // restart and double-steps the detector once the loop resumes.
+        if (this.usingFrameClock) v.cancelVideoFrameCallback?.(this.handle);
+        else cancelAnimationFrame(this.handle);
+      }
       this.handle = null;
     };
   }
@@ -168,6 +182,12 @@ export class Tracker {
     const out: RawHand[] = [];
     const a = this.cfg.hand.palm_a;
     const b = this.cfg.hand.palm_b;
+    // Mirror of py/vdrum/tracker.py: X is scaled by the frame aspect so zone
+    // rectangles mean the same thing in both implementations. Without this the
+    // zones with x0 > 1 (the whole right-hand side of the kit) are unreachable.
+    if (v.videoWidth > 0 && v.videoHeight > 0) {
+      this.aspect = v.videoWidth / v.videoHeight;
+    }
     for (let i = 0; i < res.landmarks.length; i++) {
       const lms = res.landmarks[i];
       const cat = res.handedness[i]?.[0];
@@ -178,7 +198,13 @@ export class Tracker {
       const dy = lms[b].y - lms[a].y;
       const scale = Math.sqrt(dx * dx + dy * dy);
       const t = lms[this.cfg.hand.track_landmark];
-      out.push({ hand, x: t.x, y: t.y, scale, conf: cat?.score ?? 0.0 });
+      out.push({
+        hand,
+        x: t.x * this.aspect,
+        y: t.y,
+        scale,
+        conf: cat?.score ?? 0.0,
+      });
     }
     return out;
   }

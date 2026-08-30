@@ -1,11 +1,12 @@
 {
   "aspect": "16:9",
-  "note": "Default zone rectangles in aspect-corrected normalized space (X = x * W/H, Y = y), assumed 16:9. Calibrate per setup (PLAN 6.1) -- calibration overrides these. First match in list order wins.",
+  "note": "Kit layout in aspect-corrected normalized space (X = x * W/H, assumed 16:9, so X spans 0..1.778; Y = y). Coordinates are RAW (un-mirrored) image space. The app renders a mirrored selfie view, so screen_X = 1.778 - X: a zone at raw X 1.20 draws on the player's LEFT. The X ranges below are chosen so the MIRRORED view reads as a standard right-handed kit -- hi-hat and crash on the player's left, rack tom and ride on the right, snare centre, kick at the feet. Calibrate per setup (PLAN 6.1); calibration overrides these. First match in list order wins.",
   "zones": [
     { "id": "kick",   "x": [0.66, 1.12], "y": [0.84, 1.00], "scale": [0.0, 1.0], "sample": "kick" },
     { "id": "snare",  "x": [0.60, 1.18], "y": [0.50, 0.84], "scale": [0.0, 1.0], "sample": "snare" },
-    { "id": "hi-hat", "x": [0.08, 0.55], "y": [0.45, 0.78], "scale": [0.0, 1.0], "sample": "hi-hat" },
-    { "id": "tom",    "x": [1.22, 1.62], "y": [0.45, 0.78], "scale": [0.0, 1.0], "sample": "tom" },
-    { "id": "ride",   "x": [1.40, 1.78], "y": [0.18, 0.45], "scale": [0.0, 1.0], "sample": "ride" }
+    { "id": "hi-hat", "x": [1.20, 1.68], "y": [0.45, 0.78], "scale": [0.0, 1.0], "sample": "hi-hat" },
+    { "id": "tom",    "x": [0.10, 0.58], "y": [0.45, 0.78], "scale": [0.0, 1.0], "sample": "tom" },
+    { "id": "crash",  "x": [1.30, 1.76], "y": [0.14, 0.42], "scale": [0.0, 1.0], "sample": "crash" },
+    { "id": "ride",   "x": [0.02, 0.48], "y": [0.14, 0.42], "scale": [0.0, 1.0], "sample": "ride" }
   ]
 }

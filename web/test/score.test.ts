@@ -58,7 +58,7 @@ describe("score (mirror of py/tests/test_score.py)", () => {
   });
 });
 
-describe("fitOffset (PLAN 8.4, app layer)", () => {
+describe("fitOffset (PLAN 8, app layer)", () => {
   it("null until minSamples reached, then mean(dt)", () => {
     const pred = [105, 115];
     const truth = [100, 110];

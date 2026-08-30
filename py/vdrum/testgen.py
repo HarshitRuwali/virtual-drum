@@ -35,6 +35,14 @@ DT_MS = 1000.0 / FPS
 DUR_S = 2.0
 N_FRAMES = int(DUR_S * FPS)
 
+# Aspect-corrected X (raw, un-mirrored) for the two zones the cases aim at.
+# These are COUPLED to config/zones.json: each must sit inside the named zone's
+# x range, or the fixtures stop testing what their names say they test. Kept as
+# named constants so a kit re-layout is a two-line change here, not a hunt
+# through the case list.
+X_SNARE = 0.89  # zones.json snare x = [0.60, 1.18]
+X_HIHAT = 1.25  # zones.json hi-hat x = [1.20, 1.68]
+
 
 @dataclass(frozen=True)
 class Stroke:
@@ -147,27 +155,27 @@ CASES: list[Case] = [
         name="single-stroke-snare",
         description="One clean R-hand stroke through the snare zone.",
         expected_count=1,
-        hands=[_spec("R", 0.89, V=15.7, s=0.30, T=0.20)],
+        hands=[_spec("R", X_SNARE, V=15.7, s=0.30, T=0.20)],
     ),
     Case(
         name="double-fast-merged",
         description="Two fast strokes whose velocity bumps merge under the 1 Hz-class filter: one hit.",
         expected_count=1,
-        hands=[HandSpec(hand="R", x=0.89, y0=0.55, w=0.10,
+        hands=[HandSpec(hand="R", x=X_SNARE, y0=0.55, w=0.10,
                         strokes=[Stroke(31.4, 0.30, 0.06), Stroke(31.4, 0.35, 0.06)])],
     ),
     Case(
         name="double-slow",
         description="Two strokes 200 ms apart: both register.",
         expected_count=2,
-        hands=[HandSpec(hand="R", x=0.89, y0=0.55, w=0.10,
+        hands=[HandSpec(hand="R", x=X_SNARE, y0=0.55, w=0.10,
                         strokes=[Stroke(23.6, 0.30, 0.10), Stroke(23.6, 0.50, 0.10)])],
     ),
     Case(
         name="refractory-suppresses-second",
         description="Two separated peaks 50 ms apart (nearly unfiltered): the second is inside the 60 ms refractory and is suppressed.",
         expected_count=1,
-        hands=[HandSpec(hand="R", x=0.89, y0=0.55, w=0.10,
+        hands=[HandSpec(hand="R", x=X_SNARE, y0=0.55, w=0.10,
                         strokes=[Stroke(15.7, 0.30, 0.04), Stroke(15.7, 0.35, 0.04)])],
         filter_over={"min_cutoff": 1.0e6, "beta": 0.0, "d_cutoff": 1.0e6},
     ),
@@ -175,55 +183,55 @@ CASES: list[Case] = [
         name="weak-stroke-below-vmin",
         description="Peak velocity below V_MIN: hand movement, not a strike.",
         expected_count=0,
-        hands=[_spec("R", 0.89, V=0.7, s=0.30, T=0.20)],
+        hands=[_spec("R", X_SNARE, V=0.7, s=0.30, T=0.20)],
     ),
     Case(
         name="left-hand-hihat",
         description="L-hand stroke in the hi-hat zone.",
         expected_count=1,
-        hands=[_spec("L", 0.30, V=15.7, s=0.30, T=0.20)],
+        hands=[_spec("L", X_HIHAT, V=15.7, s=0.30, T=0.20)],
     ),
     Case(
         name="distance-invariant",
         description="Same physical stroke at two apparent sizes (amplitude AND palm width halved): identical vy/w, so both hands register.",
         expected_count=2,
         hands=[
-            _spec("R", 0.89, V=15.7, s=0.30, T=0.20, w=0.10),
-            _spec("L", 0.30, V=15.7, s=0.30, T=0.20, w=0.05),
+            _spec("R", X_SNARE, V=15.7, s=0.30, T=0.20, w=0.10),
+            _spec("L", X_HIHAT, V=15.7, s=0.30, T=0.20, w=0.05),
         ],
     ),
     Case(
         name="plateau-fire-on-decel",
         description="Velocity plateaus at 1.2 then decays: fires exactly once, on the decel crossing (0.6 * peak), not at the peak or the fade.",
         expected_count=1,
-        hands=[HandSpec(hand="R", x=0.89, y0=0.55, w=0.10, y_fn=_plateau_y)],
+        hands=[HandSpec(hand="R", x=X_SNARE, y0=0.55, w=0.10, y_fn=_plateau_y)],
     ),
     Case(
         name="stationary-hand",
         description="A held, still hand never fires.",
         expected_count=0,
-        hands=[HandSpec(hand="R", x=0.89, y0=0.60, w=0.10, strokes=[])],
+        hands=[HandSpec(hand="R", x=X_SNARE, y0=0.60, w=0.10, strokes=[])],
     ),
     Case(
         name="both-hands-simultaneous",
         description="Both hands strike at once: one hit each, zones resolved per hand.",
         expected_count=2,
         hands=[
-            _spec("R", 0.89, V=15.7, s=0.30, T=0.20),
-            _spec("L", 0.30, V=15.7, s=0.30, T=0.20),
+            _spec("R", X_SNARE, V=15.7, s=0.30, T=0.20),
+            _spec("L", X_HIHAT, V=15.7, s=0.30, T=0.20),
         ],
     ),
     Case(
         name="low-confidence-ignored",
         description="A stroke with conf below MIN_CONF is skipped, not a hit.",
         expected_count=0,
-        hands=[HandSpec(hand="R", x=0.89, y0=0.55, w=0.10, conf=0.3, strokes=[Stroke(15.7, 0.30, 0.20)])],
+        hands=[HandSpec(hand="R", x=X_SNARE, y0=0.55, w=0.10, conf=0.3, strokes=[Stroke(15.7, 0.30, 0.20)])],
     ),
     Case(
         name="gap-then-second-stroke",
         description="Hand leaves the frame and returns at a different height: the GAP_MS guard stops the teleport reading as a strike, and both real strokes still fire.",
         expected_count=2,
-        hands=[HandSpec(hand="R", x=0.89, y0=0.55, w=0.10,
+        hands=[HandSpec(hand="R", x=X_SNARE, y0=0.55, w=0.10,
                         present=[(0.25, 0.55), (0.75, 1.05)], y_fn=_gap_y)],
     ),
 ]

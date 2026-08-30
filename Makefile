@@ -23,13 +23,16 @@ py-test: image
 		bash -lc "pip install -q --no-cache-dir pytest && cd /w && python -m pytest -p no:cacheprovider $(PY_DIR)/tests -v"
 
 # Regenerate the parity fixtures from the PYTHON implementation.
+# This must be the REAL generator, not the pytest case of the same name: that
+# one writes to a tmp_path and leaves $(FIXTURES) untouched, so the gate would
+# keep passing against stale expectations after a zone or constant change.
 fixtures: image
 	docker run --rm \
 		-v $(PWD)/$(PY_DIR):/w/$(PY_DIR) \
 		-v $(PWD)/config:/w/config \
 		-v $(PWD)/$(FIXTURES):/w/$(FIXTURES) \
 		$(PY_IMG) \
-		bash -lc "pip install -q --no-cache-dir pytest && cd /w && python -m pytest $(PY_DIR)/tests/test_parity.py -k write_fixtures"
+		bash -lc "cd /w && PYTHONPATH=$(PY_DIR) python -m vdrum.cli gen-parity-fixtures --out $(FIXTURES)"
 
 # THE parity gate (PLAN 7.2): TS detect vs Python-expected, bit-exact.
 parity:
@@ -41,7 +44,7 @@ typecheck:
 # Full gate: both sides, every time you touch the core.
 test: py-test parity typecheck
 
-# Download the hand model (7.8 MB, size verified per PLAN 8.4) and copy the
+# Download the hand model (7.8 MB, size verified per PLAN 2) and copy the
 # wasm runtime, so the app works offline (no CDN dependency).
 assets:
 	mkdir -p assets $(WEB_DIR)/public/assets $(WEB_DIR)/public/wasm

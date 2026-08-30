@@ -66,7 +66,7 @@ export function score(
   return { tp, fp, fn, precision, recall, f1, bias_ms: bias, jitter_ms: jitter, matched };
 }
 
-/** Per-user offset fit (PLAN 8.4, app layer): mean(Δt) over matched pairs,
+/** Per-user offset fit (PLAN 8, app layer): mean(Δt) over matched pairs,
  * once enough beats have been collected. Replaces the constant OFFSET_MS in
  * the READOUT only; the audio trigger stays at peak + constant. */
 export function fitOffset(
