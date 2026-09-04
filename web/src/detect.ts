@@ -201,6 +201,14 @@ export class StreamingDetector {
     return [...this.states.keys()];
   }
 
+  /** Swap the zone set. Live app only: some cameras do not report their frame
+   * size until after the first frames, so the aspect-fitted kit (kitfit.ts)
+   * can arrive later than the detector. Hand state is untouched, so a stroke
+   * in progress is not lost. */
+  setZones(zones: ZoneSet | null): void {
+    this.zones = zones;
+  }
+
   /** A known hand is absent this frame: commit an in-progress stroke at its
    * peak (exactly the else-branch of detect() for an untracked frame). */
   commitAbsent(t_ms: number, hand: string): Hit | null {

@@ -18,6 +18,8 @@
  * would at least calibrate out as bias (PLAN 8); drift does not.
  */
 
+import { bridge } from "./clock";
+
 const AHEAD_S = 0.12;
 const TICK_MS = 25;
 
@@ -57,11 +59,7 @@ export class Metronome {
    * OPTIONAL in the spec and are 0/absent before the device has produced any
    * audio, so an unchecked read silently maps every beat to the epoch. */
   private bridge(): { contextTime: number; performanceTime: number } | null {
-    const ots = this.ctx.getOutputTimestamp?.();
-    const c = ots?.contextTime;
-    const p = ots?.performanceTime;
-    if (c === undefined || p === undefined || c <= 0 || p <= 0) return null;
-    return { contextTime: c, performanceTime: p };
+    return bridge(this.ctx);
   }
 
   /** Audio-context time -> performance.now() time, latency compensated. */
@@ -80,10 +78,22 @@ export class Metronome {
   }
 
   start(): void {
+    this.startAt(this.ctx.currentTime + 0.1);
+  }
+
+  /** Start with beat 1 pinned to a given AudioContext instant.
+   *
+   * Used to align the grid to a backing track's position zero. Passing the
+   * song's own scheduled start time (rather than "now") is the whole point:
+   * both are scheduled slightly ahead of currentTime, and computing the two
+   * leads separately would put a few milliseconds of skew between the click
+   * and the song, which then shows up in the readout as a constant late bias
+   * on every hit. */
+  startAt(contextTime: number): void {
     if (this.running) return;
     this.running = true;
     this.beat = 0;
-    this.nextTime = this.ctx.currentTime + 0.1;
+    this.nextTime = contextTime;
     this.timer = setInterval(() => this.tick(), TICK_MS);
   }
 

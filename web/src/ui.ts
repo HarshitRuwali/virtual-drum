@@ -624,9 +624,59 @@ function drawHiHat(
 // Sticks
 // ---------------------------------------------------------------------------
 
-/** A drumstick whose TIP sits on the tracked landmark. The butt trails
- * off-frame on the side that hand belongs to, so left and right read apart
- * at a glance without a legend. */
+/** A drumstick held the way a drummer holds one.
+ *
+ * The BEAD sits on the tracked landmark, because that point is where the hit
+ * actually registers: drawing it anywhere else would be a lie about the
+ * instrument. Everything else hangs off that constraint. The shaft therefore
+ * runs UP and OUTWARD from the bead to the butt, with the gripping hand near
+ * the butt, which is the real geometry of a stroke: hand above, bead on the
+ * head. Drawing it the other way round (butt below the bead) reads as a stick
+ * dangling from the fingertips and is the single thing that made the old kit
+ * look fake.
+ */
+export interface StickGeom {
+  /** Bead: the tracked point itself, where the hit registers. */
+  beadX: number;
+  beadY: number;
+  /** Butt: up and outward from the bead. MUST be above it. */
+  buttX: number;
+  buttY: number;
+  /** Where the hand grips, along the shaft. */
+  gripX: number;
+  gripY: number;
+}
+
+/** Stick geometry, separated from the painting so it can be asserted.
+ *
+ * The one invariant worth a test: `buttY < beadY`. A stick whose butt is below
+ * its bead is a stick dangling from the fingers, and no drum stroke looks like
+ * that. It was wrong for the whole first version and nothing caught it. */
+export function stickGeometry(
+  tx: number,
+  ty: number,
+  st: Stage,
+  hand: string,
+): StickGeom {
+  // "L" is the player's left hand and, in the mirrored view, appears on the
+  // left of the screen, so its butt leans up-LEFT, away from the body centre.
+  // Negating this is invisible until you watch someone play and both sticks
+  // cross their chest.
+  const dir = hand === "L" ? -1 : 1;
+  const len = st.h * 0.3;
+  const buttX = tx + dir * len * 0.42;
+  const buttY = ty - len * 0.9;
+  return {
+    beadX: tx,
+    beadY: ty,
+    buttX,
+    buttY,
+    // Three quarters of the way up toward the butt.
+    gripX: tx + (buttX - tx) * 0.74,
+    gripY: ty + (buttY - ty) * 0.74,
+  };
+}
+
 function drawStick(
   ctx: CanvasRenderingContext2D,
   tx: number,
@@ -635,16 +685,9 @@ function drawStick(
   hand: string,
   conf: number,
 ): void {
-  // "L" is the player's left hand and, in the mirrored view, appears on the
-  // left of the screen -- so its stick comes in from the lower left.
-  // "L" is the player's left hand and, mirrored, appears on the left of the
-  // screen: its stick must trail down-LEFT. (Negating this is invisible until
-  // you watch someone play and both sticks cross their body.)
-  const dir = hand === "L" ? -1 : 1;
-  const len = st.h * 0.3;
-  const buttX = tx + dir * len * 0.5;
-  const buttY = ty + len * 0.86;
+  const { buttX, buttY, gripX, gripY } = stickGeometry(tx, ty, st, hand);
 
+  // Unit normal to the shaft, for the taper.
   const nx = -(buttY - ty);
   const ny = buttX - tx;
   const nl = Math.hypot(nx, ny) || 1;
@@ -653,13 +696,26 @@ function drawStick(
   const wTip = Math.max(2.2, st.h * 0.006);
   const wButt = Math.max(3.4, st.h * 0.011);
 
-  const wood = ctx.createLinearGradient(buttX, buttY, tx, ty);
-  wood.addColorStop(0, "#8a5a2b");
-  wood.addColorStop(0.5, "#d7a86a");
-  wood.addColorStop(1, "#f3ddba");
-
   ctx.save();
   ctx.globalAlpha = Math.max(0.35, Math.min(1, conf));
+
+  // Contact shadow on the head, directly under the bead: without it the stick
+  // floats and you cannot tell how close to the drum it is.
+  ctx.save();
+  ctx.globalAlpha *= 0.35;
+  ctx.beginPath();
+  ctx.ellipse(tx, ty + wTip * 1.6, wTip * 2.6, wTip * 1.1, 0, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
+  ctx.fill();
+  ctx.restore();
+
+  // Shaft: light at the bead, darkening into the grip, so the eye reads depth
+  // along its length rather than a flat plank.
+  const wood = ctx.createLinearGradient(buttX, buttY, tx, ty);
+  wood.addColorStop(0, "#7d5227");
+  wood.addColorStop(0.45, "#c9974f");
+  wood.addColorStop(1, "#f3ddba");
+
   ctx.beginPath();
   ctx.moveTo(buttX + ux * wButt, buttY + uy * wButt);
   ctx.lineTo(tx + ux * wTip, ty + uy * wTip);
@@ -672,14 +728,38 @@ function drawStick(
   ctx.lineWidth = 1;
   ctx.stroke();
 
-  // Bead.
-  const tipColor = hand === "L" ? "#67e8f9" : "#fca5a5";
-  radialGlow(ctx, tx, ty, st.h * 0.05, tipColor, 0.5);
+  // The grip. A plain blob is enough at this scale; a drawn hand fights the
+  // camera image behind it.
+  const gx = gripX;
+  const gy = gripY;
+  const gr = Math.max(6, st.h * 0.026);
+  const skin = ctx.createRadialGradient(
+    gx - gr * 0.3,
+    gy - gr * 0.4,
+    gr * 0.1,
+    gx,
+    gy,
+    gr,
+  );
+  const tone = hand === "L" ? "#38bdf8" : "#f87171";
+  skin.addColorStop(0, "rgba(255, 255, 255, 0.5)");
+  skin.addColorStop(1, "rgba(15, 23, 42, 0.72)");
   ctx.beginPath();
-  ctx.arc(tx, ty, wTip * 1.7, 0, Math.PI * 2);
+  ctx.ellipse(gx, gy, gr, gr * 0.78, Math.atan2(buttY - ty, buttX - tx), 0, Math.PI * 2);
+  ctx.fillStyle = skin;
+  ctx.fill();
+  ctx.strokeStyle = tone;
+  ctx.lineWidth = 1.4;
+  ctx.stroke();
+
+  // Bead, and its glow: the one part of the drawing that is literally true,
+  // so it is the brightest thing on the stick.
+  radialGlow(ctx, tx, ty, st.h * 0.05, tone, 0.5);
+  ctx.beginPath();
+  ctx.arc(tx, ty, wTip * 1.9, 0, Math.PI * 2);
   ctx.fillStyle = "#f8ecd6";
   ctx.fill();
-  ctx.strokeStyle = tipColor;
+  ctx.strokeStyle = tone;
   ctx.lineWidth = 1.6;
   ctx.stroke();
   ctx.restore();

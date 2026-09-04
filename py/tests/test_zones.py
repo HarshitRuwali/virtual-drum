@@ -151,3 +151,25 @@ def test_testgen_strike_coordinates_match_the_shipped_zones():
                 f"{zid} constant x={x} at y={y:.3f} resolves to "
                 f"{got.id if got else None}"
             )
+
+def test_detect_tests_strike_path_stays_inside_the_snare():
+    """py/tests/test_detect.py drives every stroke at x=0.89 down a y path and
+    asserts the resulting hit is a snare. Those numbers are inline literals in
+    a different file with nothing but this test holding them to zones.json.
+
+    A kit re-layout that moves the snare/kick boundary up by two hundredths
+    turns those tests from "the gap guard fires one hit" into "the gap guard
+    fires one KICK", which is a confusing failure a long way from its cause.
+    Asked for by experience: that is exactly what happened.
+    """
+    from vdrum.testgen import X_SNARE
+
+    zs = default_zones()
+    # The widest y band any test_detect.py stroke passes through, plus the
+    # peak-detection lookback. Keep this in step with that file.
+    for y in (0.50, 0.55, 0.5666667, 0.80, 0.8166667, 0.8333333):
+        got = zs.lookup(X_SNARE, y, 0.10)
+        assert got is not None and got.id == "snare", (
+            f"test_detect.py drives x={X_SNARE} y={y} and expects a snare, "
+            f"but zones.json now resolves it to {got.id if got else None}"
+        )

@@ -17,6 +17,10 @@
  */
 import { configFromDict, type Config } from "./config";
 import { ZoneSet } from "./zones";
+import { fitZonesToAspect } from "./kitfit";
+import { StompInput } from "./stomp";
+import { MidiInput } from "./midi";
+import { BackingTrack } from "./backing";
 import { Tracker, type RawHand } from "./tracker";
 import { StreamingDetector, type Hit } from "./detect";
 import { DrumKit } from "./audio";
@@ -48,7 +52,7 @@ export async function startApp(
   onStatus: (msg: string) => void = () => {},
 ): Promise<void> {
   const cfg: Config = configFromDict(await load("/config/default.json"));
-  const zones = ZoneSet.fromDict(await load("/config/zones.json"));
+  const authored = ZoneSet.fromDict(await load("/config/zones.json"));
 
   const video = el<HTMLVideoElement>("video");
   const canvas = el<HTMLCanvasElement>("stage");
@@ -57,6 +61,10 @@ export async function startApp(
   const volSlider = el<HTMLInputElement>("vol");
   const metroBtn = el<HTMLButtonElement>("metro");
   const zonesBtn = el<HTMLButtonElement>("zones-btn");
+  const songBtn = el<HTMLButtonElement>("song-btn");
+  const songFile = el<HTMLInputElement>("song-file");
+  const songName = el("song-name");
+  const songVol = el<HTMLInputElement>("song-vol");
   const lamps = Array.from(document.querySelectorAll<HTMLElement>(".lamp"));
   const dtEl = el("dt");
   const dtWord = el("dt-word");
@@ -67,6 +75,8 @@ export async function startApp(
   const bClock = el("b-clock");
   const bAudio = el("b-audio");
   const bCam = el("b-cam");
+  const bKick = el("b-kick");
+  const bSong = el("b-song");
 
   // "interactive" asks the platform for the smallest output buffer it can
   // manage: the difference between a kit that feels connected and one that
@@ -79,6 +89,12 @@ export async function startApp(
   await tracker.init("/assets/hand_landmarker.task");
   onStatus("starting camera…");
   await tracker.start(video);
+
+  // zones.json is authored for 16:9. On any other camera the outer pieces sit
+  // past the edge of what the frame can even contain, so fit the kit to the
+  // shape we actually got (kitfit.ts explains why this is app-layer).
+  let fittedAspect = tracker.aspect;
+  let zones = fitZonesToAspect(authored, fittedAspect);
 
   const kit = new DrumKit(ctx);
   kit.init();
@@ -175,6 +191,14 @@ export async function startApp(
   // ---- detection loop (camera clock) -------------------------------------
 
   tracker.run((hands: RawHand[], tMs: number): void => {
+    // Some cameras report their frame size only after a few frames have
+    // decoded. Re-fit if it lands late, so the kit is never left scaled to the
+    // 16/9 guess while the hand is being measured against a 4:3 frame.
+    if (tracker.aspect !== fittedAspect) {
+      fittedAspect = tracker.aspect;
+      zones = fitZonesToAspect(authored, fittedAspect);
+      detector.setZones(zones);
+    }
     const seen = new Set<string>();
     for (const hd of hands) {
       seen.add(hd.hand);
@@ -212,16 +236,58 @@ export async function startApp(
     pendingBeats.push({ t: t_ms, beat });
   };
 
-  // Kick from the keyboard: no foot in frame, and a faked hand-kick would
-  // corrupt the timing data it is supposed to measure.
+  // ---- kick ---------------------------------------------------------------
+  //
+  // Three sources, all landing on the same record() call. The space bar was
+  // never really playable: you cannot press it with both hands in the air,
+  // which is the only posture this app is used in. A stomp or a pedal gives
+  // the foot back to the foot without faking one from a hand, which would
+  // corrupt exactly the timing data the tool exists to measure (PLAN 6.2).
+  function kick(velocity: number, tMs: number): void {
+    const z = zones.zones.find((k) => k.id === "kick");
+    const x = z ? (z.x0 + z.x1) / 2 : 0;
+    const y = z ? (z.y0 + z.y1) / 2 : 0;
+    // Deafen the mic while our own kick is sounding: through speakers the
+    // sample's thump is a textbook stomp and would retrigger itself forever.
+    stomp.mute(140);
+    record("kick", "foot", velocity, tMs, x, y);
+  }
+
+  // Set by the song transport. A backing track through SPEAKERS is full of
+  // low-frequency kick and bass, which is precisely what the stomp detector
+  // keys on, so the two cannot both be trusted without headphones. Say so in
+  // the badge rather than letting the kick fire on the song's own drummer.
+  let songLive = false;
+  const stomp = new StompInput(ctx);
+  const midi = new MidiInput();
+
   window.addEventListener("keydown", (e: KeyboardEvent): void => {
     if (e.code !== "Space" || e.repeat) return;
     e.preventDefault();
-    const kickZone = zones.zones.find((z) => z.id === "kick");
-    const x = kickZone ? (kickZone.x0 + kickZone.x1) / 2 : 0;
-    const y = kickZone ? (kickZone.y0 + kickZone.y1) / 2 : 0;
-    record("kick", "foot", 1, performance.now(), x, y);
+    kick(1, performance.now());
   });
+
+  // Both are opportunistic: neither failing should stop the kit working, so
+  // the space bar always stays live and the badge says what actually armed.
+  const sources = ["space"];
+  void stomp.start((h) => kick(h.velocity, h.tMs)).then((ok) => {
+    if (ok) sources.push("mic");
+    updateKickBadge();
+  });
+  void midi.start((h) => kick(h.velocity, h.tMs)).then((ok) => {
+    if (ok) sources.push("pedal");
+    updateKickBadge();
+  });
+
+  function updateKickBadge(): void {
+    const micArmed = sources.includes("mic");
+    if (micArmed && songLive) {
+      badge(bKick, "kick", "use headphones", false);
+      return;
+    }
+    badge(bKick, "kick", sources.join(" + "), sources.length > 1);
+  }
+  updateKickBadge();
 
   bpmSlider.addEventListener("input", (): void => {
     const bpm = Number(bpmSlider.value);
@@ -245,6 +311,68 @@ export async function startApp(
       metroBtn.classList.add("on");
     }
   });
+  // ---- backing track ------------------------------------------------------
+  //
+  // Practising against a real song, not just a click. Starting it also resets
+  // the beat grid so bar 1 lands on song position 0: without that the timing
+  // readout would be measuring against a metronome with no relationship to
+  // what you are playing along to, which is worse than no number at all.
+  const song = new BackingTrack(ctx);
+  song.setVolume(Number(songVol.value) / 100);
+
+  function songBadge(): void {
+    const on = song.playing;
+    songLive = on;
+    updateKickBadge();
+    badge(bSong, "song", song.loaded ? (on ? "playing" : "ready") : "off", on);
+    songBtn.textContent = !song.loaded ? "load song" : on ? "stop song" : "play song";
+    songBtn.classList.toggle("on", on);
+  }
+
+  songBtn.addEventListener("click", (): void => {
+    if (!song.loaded) {
+      songFile.click();
+      return;
+    }
+    if (song.playing) {
+      song.stop();
+    } else {
+      const at = song.start();
+      if (metro.isRunning) {
+        // Same instant for both, so beat 1 IS song zero.
+        expected.length = 0;
+        pendingBeats.length = 0;
+        metro.stop();
+        metro.startAt(at);
+      }
+    }
+    songBadge();
+  });
+
+  songFile.addEventListener("change", (): void => {
+    const f = songFile.files?.[0];
+    if (!f) return;
+    void song
+      .load(f)
+      .then(() => {
+        songName.textContent = f.name.replace(/\.[^.]+$/, "").slice(0, 24);
+        songVol.disabled = false;
+        songBadge();
+      })
+      .catch((err: unknown) => {
+        songName.textContent = "could not decode";
+        console.error("song decode failed", err);
+      });
+  });
+
+  songVol.addEventListener("input", (): void => {
+    song.setVolume(Number(songVol.value) / 100);
+  });
+
+  song.onEnded = songBadge;
+  songBtn.disabled = false;
+  songBadge();
+
   zonesBtn.addEventListener("click", (): void => {
     showZones = !showZones;
     zonesBtn.classList.toggle("on", showZones);
@@ -333,10 +461,12 @@ export async function startApp(
     const win = frameTimes.filter((t) => now - t < 1000);
     const fps = win.length;
     const declared = tracker.frameRate;
+    const size = tracker.frameSize;
     badge(
       bCam,
       "cam",
-      `${fps} fps${declared ? ` / ${Math.round(declared)}` : ""}`,
+      `${fps} fps${declared ? ` / ${Math.round(declared)}` : ""}` +
+        (size ? ` ${size.w}x${size.h}` : ""),
       fps >= 24,
     );
   }

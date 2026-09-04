@@ -202,6 +202,8 @@
           <div class="badge" id="b-clock">clock <b>--</b></div>
           <div class="badge" id="b-audio">audio <b>--</b></div>
           <div class="badge" id="b-cam">cam <b>--</b></div>
+          <div class="badge" id="b-kick">kick <b>--</b></div>
+          <div class="badge" id="b-song">song <b>off</b></div>
         </div>
       </div>
 
@@ -232,6 +234,12 @@
           <span class="val" id="bpm-label">80</span></label>
         <label>vol
           <input id="vol" type="range" min="0" max="100" step="1" value="85" disabled /></label>
+        <div class="sep"></div>
+        <button id="song-btn" disabled>load song</button>
+        <span class="val" id="song-name"></span>
+        <label>song
+          <input id="song-vol" type="range" min="0" max="100" step="1" value="70" disabled /></label>
+        <input id="song-file" type="file" accept="audio/*" hidden />
         <div class="sep"></div>
         <button id="zones-btn" disabled>show zones</button>
       </div>

@@ -122,7 +122,26 @@ export class Tracker {
     });
     video.srcObject = this.stream;
     await video.play();
+    // Resolve the aspect here, not on the first frame: the zone layout is
+    // fitted to it before the first hit can be detected, and a kit fitted to
+    // the 16/9 default and then re-fitted a frame later would move under the
+    // player's hands.
+    if (video.videoWidth > 0 && video.videoHeight > 0) {
+      this.aspect = video.videoWidth / video.videoHeight;
+    }
     this.video = video as RvfcVideo;
+  }
+
+  /** Live frame size, once a frame has arrived.
+   *
+   * Worth showing in the HUD rather than assuming: zone X spans 0..aspect, so
+   * a camera that is not 16:9 changes which zones a hand can physically reach.
+   * A kit that silently loses its outer pieces on a 4:3 webcam looks like a
+   * detection failure, not a geometry one. */
+  get frameSize(): { w: number; h: number } | null {
+    const v = this.video;
+    if (!v || !v.videoWidth || !v.videoHeight) return null;
+    return { w: v.videoWidth, h: v.videoHeight };
   }
 
   /** Actual camera frame rate, once the track is live (for the UI / diagnostics). */
