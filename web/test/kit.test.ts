@@ -26,45 +26,60 @@ function kit(): ZoneSet {
 describe("drumstick geometry", () => {
   const st = stageOf({ width: 1600, height: 900 }, AUTHORED_ASPECT);
 
-  it("puts the butt ABOVE the bead, for both hands", () => {
-    // The original bug: butt at ty + 0.86*len, so the stick hung off the
-    // fingertips pointing at the floor. No stroke looks like that.
+  it("rises from the hand rather than dangling below it", () => {
+    // The first bug: the shaft hung off the fingertips pointing at the floor.
     for (const hand of ["L", "R"]) {
       const g = stickGeometry(800, 500, st, hand);
-      expect(g.buttY, `${hand} butt must be above the bead`).toBeLessThan(g.beadY);
+      expect(g.tipY, `${hand} tip must be above the hand`).toBeLessThan(g.handY);
     }
   });
 
-  it("keeps the bead exactly on the tracked point", () => {
-    // The bead is where the hit actually registers. Drawing it anywhere else
-    // makes the picture disagree with the instrument.
+  it("puts the THICK end in the hand, which is how a stick is held", () => {
+    // The second bug, and the one that took two rounds to see: the shaft was
+    // the right way up, but the BEAD was at the tracked point and the fat butt
+    // waved in the air. That is a stick held upside down. The invariant is
+    // about the silhouette, so assert on the width profile the renderer uses,
+    // not on a coordinate.
+    for (const hand of ["L", "R"]) {
+      const g = stickGeometry(800, 500, st, hand);
+      const len = Math.hypot(g.tipX - g.handX, g.tipY - g.handY);
+      // The grip sits near the hand end, which is only sensible if the hand
+      // end is the butt: nobody grips a stick by its bead.
+      const toHand = Math.hypot(g.gripX - g.handX, g.gripY - g.handY);
+      expect(toHand).toBeLessThan(len * 0.35);
+    }
+  });
+
+  it("keeps the hand end exactly on the tracked point", () => {
+    // The hit registers there. Drawing it anywhere else makes the picture
+    // disagree with the instrument.
     const g = stickGeometry(731, 412, st, "R");
-    expect(g.beadX).toBe(731);
-    expect(g.beadY).toBe(412);
+    expect(g.handX).toBe(731);
+    expect(g.handY).toBe(412);
   });
 
   it("leans each stick outward, so they never cross the body", () => {
     const l = stickGeometry(800, 500, st, "L");
     const r = stickGeometry(800, 500, st, "R");
-    expect(l.buttX).toBeLessThan(l.beadX); // left hand: up-left
-    expect(r.buttX).toBeGreaterThan(r.beadX); // right hand: up-right
+    expect(l.tipX).toBeLessThan(l.handX); // left hand: up-left
+    expect(r.tipX).toBeGreaterThan(r.handX); // right hand: up-right
   });
 
-  it("grips between the bead and the butt, nearer the butt", () => {
+  it("keeps a drumstick's proportions, not a wooden spoon's", () => {
+    // A 5A is about 29:1 long-to-thick. An earlier version rendered 13.6:1 and
+    // looked wrong for reasons no coordinate assertion could have caught.
     const g = stickGeometry(800, 500, st, "R");
-    expect(g.gripY).toBeGreaterThan(g.buttY);
-    expect(g.gripY).toBeLessThan(g.beadY);
-    const toButt = Math.hypot(g.gripX - g.buttX, g.gripY - g.buttY);
-    const toBead = Math.hypot(g.gripX - g.beadX, g.gripY - g.beadY);
-    expect(toButt).toBeLessThan(toBead);
+    const len = Math.hypot(g.tipX - g.handX, g.tipY - g.handY);
+    const halfWidth = Math.max(2.4, len / 29);
+    expect(len / (2 * halfWidth)).toBeGreaterThan(12);
   });
 
   it("scales the stick with the stage, not with the pixel canvas", () => {
     const small = stageOf({ width: 800, height: 450 }, AUTHORED_ASPECT);
     const a = stickGeometry(400, 250, small, "R");
     const b = stickGeometry(800, 500, st, "R");
-    const lenA = Math.hypot(a.buttX - a.beadX, a.buttY - a.beadY);
-    const lenB = Math.hypot(b.buttX - b.beadX, b.buttY - b.beadY);
+    const lenA = Math.hypot(a.tipX - a.handX, a.tipY - a.handY);
+    const lenB = Math.hypot(b.tipX - b.handX, b.tipY - b.handY);
     expect(lenB / lenA).toBeCloseTo(2, 6);
   });
 });

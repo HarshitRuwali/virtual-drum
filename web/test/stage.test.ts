@@ -118,7 +118,8 @@ function stubCtx(): { ctx: unknown; calls: string[] } {
   };
   for (const m of [
     "clearRect", "setTransform", "fillRect", "strokeRect", "beginPath",
-    "ellipse", "arc", "moveTo", "lineTo", "closePath", "fill", "stroke",
+    "ellipse", "arc", "moveTo", "lineTo", "quadraticCurveTo", "bezierCurveTo",
+    "closePath", "fill", "stroke",
     "save", "restore", "translate", "scale", "rotate", "clip", "drawImage",
     "fillText", "setLineDash",
   ]) {
